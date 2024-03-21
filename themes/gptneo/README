@@ -1,6 +1,6 @@
 
 1.本文基于参数量1M的TinyStories(下载地址:https://huggingface.co/roneneldan/TinyStories-1M)
 2.模型下载后放到目录themes/gptneo目录下
-3.配置vscode参数如下，即可运行
+3.运行命令: python themes/gptneo/gptneo_main.py
 
 

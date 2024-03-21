@@ -61,47 +61,49 @@ def norm_logits(logits : torch.Tensor, temperature : float, top_k : float, top_p
   probs = F.softmax(logits, dim=1)
   return probs
 
-
-@torch.no_grad()
-def autoregressive_sampling(x : torch.Tensor, model : torch.nn.Module, N : int,
-                            temperature : float = 1, top_k : int = 0, top_p : float = 0):
-  n = len(x)
-  T = len(x) + N
-  past_key_values = None
-  while n < T:
-    # outputs = model(x)
-    if past_key_values:
-        last_ids = x[:, -1]
-        if last_ids.dim() == 1:
-            last_ids = torch.unsqueeze(last_ids, 0)
-        # torch.onnx.export(model, (last_ids, past_key_values), "./model.onnx", input_names=["input", "cache"], output_names=["output"])
-        outputs = model(last_ids, past_key_values = past_key_values, use_cache = True)
-    else:
-        # torch.onnx.export(model, x, "./model.onnx", input_names=["input"], output_names=["output"])
-        outputs = model(x)
-    last_p = norm_logits(outputs.logits[::, -1, :], temperature, top_k, top_p)
-    past_key_values = outputs.past_key_values
-    idx_next = sample(last_p)
-    x = torch.cat((x, idx_next), dim=1)
-    n += 1
-  return x
-
-
 def generate(input_text, model_name):
   torch_device = 'cpu'
+  # 步骤1: 对输入进行编码
   tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-  small_model = AutoModelForCausalLM.from_pretrained(model_name,
+  input_ids = tokenizer.encode(input_text, return_tensors='pt').to(torch_device)
+
+  # 步骤2: 初始化语言模型
+
+  ## 采样参数初始化
+  N = 20
+  top_k = 10
+  top_p = 0.9
+  temperature = 1.0
+
+
+  ## 模型初始化
+  demo_model = AutoModelForCausalLM.from_pretrained(model_name,
                                                       torch_dtype=torch.float32,
                                                       device_map="cpu",
                                                       trust_remote_code=True)
-  logger.debug("finish loading model")
-  input_ids = tokenizer.encode(input_text, return_tensors='pt').to(torch_device)
-  num_tokens = 20
-  top_k = 20
-  top_p = 0.9
 
-  torch.manual_seed(123)
-  output = autoregressive_sampling(input_ids, small_model, num_tokens, top_k = top_k, top_p=top_p)
+  n = len(input_ids)
+  T = len(input_ids) + N
+  output = input_ids
+  past_key_values = None  # 这里使用KVCache进行优化
+  torch.manual_seed(123)  # 设置生成随机数的种子，保证实验结果是可福先到
+  while n < T:
+    # 步骤3: 语言模型推理
+    if past_key_values:
+        last_ids = output[:, -1]
+        if last_ids.dim() == 1:
+            last_ids = torch.unsqueeze(last_ids, 0)
+        # torch.onnx.export(demo_model, (last_ids, past_key_values), "./model.onnx", input_names=["input", "cache"], output_names=["output"])
+        outputs = demo_model(last_ids, past_key_values = past_key_values, use_cache = True)
+    else:
+        outputs = demo_model(output)
+    # 步骤4: 推理结果解码
+    last_p = norm_logits(outputs.logits[::, -1, :], temperature, top_k, top_p)
+    past_key_values = outputs.past_key_values
+    idx_next = sample(last_p)
+    output = torch.cat((output, idx_next), dim=1)
+    n += 1
+  # 步骤5：推理结果解码
   generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
   logger.debug("%s %s %s" % (Fore.RED, generated_text, Style.RESET_ALL))
 
